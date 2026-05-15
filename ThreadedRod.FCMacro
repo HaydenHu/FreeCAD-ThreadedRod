@@ -114,106 +114,97 @@ def suggest_thread(info):
     return None, best_diff
 
 
-def create_threaded_sleeve(doc, nom_diameter, pitch, sleeve_length, sleeve_wall):
+def create_thread_cutter(doc, nom_diameter, pitch, cutter_length, cutter_radius):
     """
-    利用 PartDesign Hole 创建带螺纹孔的空心套筒。
-    返回套筒 Body 的 Shape。
+    利用 PartDesign Hole 创建一个螺纹切刀体。
 
-    原理：创建一个比螺纹外径稍大的圆柱体，在上面打一个
-    带 ModelThread 的 Hole。Hole 的螺纹会自动生成在孔内壁上。
-    得到的 Body.Shape 就是一个内壁有螺纹的空心圆柱。
+    在临时 Body 中创建大圆柱体 + 带 ModelThread 的 Hole，
+    Hole.Shape 就是一个螺纹柱体，可直接用于布尔切割。
     """
-    # 临时 Body
-    body = doc.addObject("PartDesign::Body", "_ThreadSleeveBody")
+    # 临时 Body — 套一个大圆柱让 Hole 有足够的材料可切
+    body = doc.addObject("PartDesign::Body", "_ThreadCutterBody")
 
-    # 基础圆柱 — 外径 = 公称直径 + 壁厚
-    cyl = doc.addObject("PartDesign::AdditiveCylinder", "_SleeveCyl")
-    cyl.Radius = nom_diameter / 2.0 + sleeve_wall
-    cyl.Height = sleeve_length
+    # 大圆柱 — 半径比 Hole 的草图圆大
+    cyl = doc.addObject("PartDesign::AdditiveCylinder", "_CutterBase")
+    cyl.Radius = cutter_radius
+    cyl.Height = cutter_length
     cyl.Angle = 360
     body.addObject(cyl)
     doc.recompute()
 
-    # 找到圆柱的顶面 (z=正方向的面)
-    cyl_top_face_name = None
+    # 找到圆柱顶面
+    top_face = None
     for i, f in enumerate(cyl.Shape.Faces):
         try:
-            dist = f.distToShape(Part.Vertex(Vector(0, 0, sleeve_length)))
+            dist = f.distToShape(Part.Vertex(Vector(0, 0, cutter_length)))
             if abs(dist[0]) < 0.01:
-                cyl_top_face_name = "Face{}".format(i + 1)
+                top_face = "Face{}".format(i + 1)
                 break
         except Exception:
             continue
-    if cyl_top_face_name is None:
-        cyl_top_face_name = "Face2"  # fallback
+    if top_face is None:
+        top_face = "Face2"
 
-    # 创建 Sketch — 圆心在原点，用于 Hole 定位
+    # Sketch — 圆心在原点的圆，直径=公称直径
     import Sketcher
-    sketch = doc.addObject("Sketcher::SketchObject", "_SleeveSketch")
+    sketch = doc.addObject("Sketcher::SketchObject", "_CutterSketch")
     body.addObject(sketch)
-    sketch.AttachmentSupport = (cyl, cyl_top_face_name)
+    sketch.AttachmentSupport = (cyl, top_face)
     sketch.MapMode = "FlatFace"
     doc.recompute()
 
-    # 在 sketch 原点画一个圆
     geo_list = []
     geo_list.append(Part.Circle())
     geo_list[0].Radius = nom_diameter / 2.0
     sketch.addGeometry(geo_list, False)
-    sketch.addConstraint(Sketcher.Constraint("Coincident", 0, 3, -1, 1))  # 圆心约束到原点
+    sketch.addConstraint(Sketcher.Constraint("Coincident", 0, 3, -1, 1))
     doc.recompute()
 
-    # 创建 Hole
-    hole = doc.addObject("PartDesign::Hole", "_SleeveHole")
+    # Hole — ModelThread=1 生成真实螺纹几何
+    hole = doc.addObject("PartDesign::Hole", "_CutterHole")
     body.addObject(hole)
     hole.Profile = sketch
-    hole.Diameter = nom_diameter  # 孔的直径 = 螺纹公称直径
-    hole.Depth = sleeve_length
+    hole.Diameter = nom_diameter
+    hole.Depth = cutter_length
     hole.DepthType = 0       # 固定深度
     hole.DrillPoint = 0      # 平底
-    hole.Threaded = 1        # 启用螺纹
-    hole.ModelThread = 1     # 生成实际的 3D 螺纹几何
+    hole.Threaded = 1
+    hole.ModelThread = 1     # 3D 螺纹几何
     hole.ThreadType = 1      # ISO Metric Profile
     hole.ThreadDepthType = 0
-    hole.ThreadDirection = 0  # 右旋
+    hole.ThreadDirection = 0
     hole.ThreadClass = 0
-    hole.HoleCutType = 0     # 无沉头/倒角
+    hole.HoleCutType = 0
     hole.Tapered = 0
     hole.Reversed = 0
     hole.Refine = True
 
-    # 设置螺纹尺寸 — ThreadSize 是 Hole 内部的尺寸索引
-    # 通过枚举值找到匹配的 ThreadSize 索引
-    try:
-        thread_sizes = hole.getEnumerationsOfProperty("ThreadSize")
-        target = ""
-        for ts in thread_sizes:
-            ts_lower = ts.lower()
-            if ts_lower.startswith("m") and "x" in ts_lower:
-                try:
-                    d_part = ts_lower[1:].split("x")[0].strip()
-                    d = float(d_part)
-                    if abs(d - nom_diameter) < 0.01:
-                        target = ts
-                        break
-                except ValueError:
-                    continue
-        if target:
-            hole.ThreadSize = thread_sizes.index(target)
-        else:
-            # 回退：如果精确匹配不到，打印可用列表并报错
-            sizes_str = ", ".join(thread_sizes[:10]) + ("..." if len(thread_sizes) > 10 else "")
-            raise RuntimeError(
-                f"Cannot find matching thread size for M{nom_diameter:.0f} "
-                f"in the Hole thread size list. "
-                f"First available: {sizes_str}")
-    except Exception as e:
-        raise RuntimeError(f"Failed to set thread size: {e}")
+    # 匹配 ThreadSize
+    thread_sizes = hole.getEnumerationsOfProperty("ThreadSize")
+    target = ""
+    for ts in thread_sizes:
+        ts_lower = ts.lower()
+        if ts_lower.startswith("m") and "x" in ts_lower:
+            try:
+                d_part = ts_lower[1:].split("x")[0].strip()
+                d = float(d_part)
+                if abs(d - nom_diameter) < 0.01:
+                    target = ts
+                    break
+            except ValueError:
+                continue
+    if target:
+        hole.ThreadSize = thread_sizes.index(target)
+    else:
+        sizes_str = ", ".join(thread_sizes[:10]) + ("..." if len(thread_sizes) > 10 else "")
+        raise RuntimeError(
+            f"Cannot find matching thread size for M{nom_diameter:.0f}. "
+            f"Available: {sizes_str}")
 
     doc.recompute()
 
-    # 返回 Body 的 Shape（带螺纹孔的空心圆柱）
-    return body.Shape, body
+    # Hole.Shape 是螺纹柱体切刀
+    return hole.Shape, body
 
 
 def main():
@@ -333,19 +324,6 @@ def main():
     len_layout.addWidget(len_spin)
     layout.addLayout(len_layout)
 
-    # 套筒壁厚
-    wall_layout = QtGui.QHBoxLayout()
-    wall_layout.addWidget(QtGui.QLabel("套筒壁厚 (mm):"))
-    wall_spin = QtGui.QDoubleSpinBox()
-    wall_spin.setRange(1.0, 50.0)
-    wall_spin.setDecimals(2)
-    wall_spin.setSingleStep(0.5)
-    wall_spin.setValue(8.0)
-    wall_spin.setToolTip("套筒外壁到螺纹外径的距离。\n"
-                         "建议 >= 螺距，以确保螺纹槽不会穿透套筒外壁。")
-    wall_layout.addWidget(wall_spin)
-    layout.addLayout(wall_layout)
-
     # 螺纹旋向
     handed_layout = QtGui.QHBoxLayout()
     handed_layout.addWidget(QtGui.QLabel("旋向:"))
@@ -383,13 +361,12 @@ def main():
     layout.addLayout(btn_layout)
     dlg.setLayout(layout)
 
-    if dlg.exec() != QtGui.QDialog.Accepted:
+    if dlg.exec_() != QtGui.QDialog.Accepted:
         return
 
     nom_diameter = diam_spin.value()
     pitch = pitch_spin.value()
     thread_length = len_spin.value()
-    sleeve_wall = wall_spin.value()
     is_left_handed = (handed_combo.currentIndex() == 1)
 
     if nom_diameter <= 0 or pitch <= 0 or thread_length <= 0:
@@ -398,24 +375,20 @@ def main():
 
     doc.openTransaction("Threaded Rod")
     try:
-        # ── 步骤 1: 创建带螺纹孔的空心套筒 ──
-        sleeve_shape, sleeve_body = create_threaded_sleeve(
-            doc, nom_diameter, pitch, thread_length, sleeve_wall)
+        # ── 步骤 1: 创建螺纹切刀体 (Hole.Shape) ──
+        cutter_radius = nom_diameter / 2.0 + max(pitch * 2, 5.0)
+        cutter_shape, cutter_body = create_thread_cutter(
+            doc, nom_diameter, pitch, thread_length, cutter_radius)
 
-        # ── 步骤 2: 如果用户选了左旋，翻转套筒（因为 Hole 只能右旋） ──
-        # 左旋通过镜像实现：取套筒沿径向翻转
-        # 不做镜像处理，Hole 默认右旋
-
-        # ── 步骤 3: 将套筒移动到用户圆柱的位置 ──
+        # ── 步骤 2: 将切刀移动到用户圆柱的位置 ──
         axis = face_info['axis']
         start_pt = face_info['axis_start']
         z_axis = Vector(0, 0, 1)
 
-        # 创建放置 — 绕轴随机旋转避免螺纹起点对齐 0°/90° 导致布尔卡死
         placement = App.Placement()
         placement.Base = start_pt - axis * (pitch * 0.5)
 
-        # 先建轴对齐旋转
+        # 轴对齐旋转
         if abs(axis.dot(z_axis) - 1.0) > 1e-7:
             rot_axis = z_axis.cross(axis)
             if rot_axis.Length > 1e-7:
@@ -423,47 +396,43 @@ def main():
                 ang = math.acos(z_axis.dot(axis))
                 placement.Rotation = App.Rotation(rot_axis, math.degrees(ang))
 
-        # 再绕自身 z 轴旋转一个非正交角度，避免螺纹起点在 0°/90°
-        # 使用黄金角度 37.5° (避免有理数倍于 90°)
+        # 绕轴旋转黄金角度避免 0°/90° 对齐导致布尔卡死
         twist = App.Rotation(axis, 37.5)
         placement.Rotation = twist.multiply(placement.Rotation)
 
-        # 创建一个带 placement 的副本
-        sleeve_copy = doc.addObject("Part::Feature", "_ThreadSleeveCopy")
-        sleeve_copy.Shape = sleeve_shape
-        sleeve_copy.Placement = placement
-        sleeve_copy.Visibility = False
+        # 把 Hole.Shape 放到正确位置
+        cutter_placed = doc.addObject("Part::Feature", "_ThreadCutterPlaced")
+        cutter_placed.Shape = cutter_shape
+        cutter_placed.Placement = placement
+        cutter_placed.Visibility = False
         doc.recompute()
 
-        # ── 步骤 4: 布尔切割 ──
+        # ── 步骤 3: 用户圆柱 .cut(Hole.Shape) = 外螺纹 ──
         base_shape = source_obj.Shape
-        result_shape = base_shape.cut(sleeve_copy.Shape)
+        result_shape = base_shape.cut(cutter_placed.Shape)
 
         if result_shape is None or result_shape.isNull():
             raise RuntimeError("布尔切割失败。请检查螺纹直径是否合理。")
 
         result_shape = result_shape.removeSplitter()
 
-        # ── 步骤 5: 输出结果 ──
+        # ── 步骤 4: 输出结果 ──
         if body:
-            # PartDesign 模式
             result_obj = doc.addObject('Part::Feature', 'ThreadedRod')
             result_obj.Shape = result_shape
             result_obj.Label = f"ThreadedRod_M{nom_diameter:.0f}x{pitch:.2f}"
             if hasattr(source_obj, 'ViewObject') and hasattr(result_obj, 'ViewObject'):
                 result_obj.ViewObject.ShapeColor = source_obj.ViewObject.ShapeColor
             source_obj.Visibility = False
-            if body:
-                body.Visibility = False
+            body.Visibility = False
         else:
-            # Part 模式
             source_obj.Shape = result_shape
 
         doc.recompute()
 
-        # ── 步骤 6: 删除临时对象 ──
-        doc.removeObject(sleeve_copy.Name)
-        doc.removeObject(sleeve_body.Name)
+        # ── 步骤 5: 删除临时对象 ──
+        doc.removeObject(cutter_placed.Name)
+        doc.removeObject(cutter_body.Name)
         doc.recompute()
 
         doc.commitTransaction()
