@@ -203,8 +203,8 @@ def create_thread_cutter(doc, nom_diameter, pitch, cutter_length, cutter_radius)
 
     doc.recompute()
 
-    # Hole.Shape 是螺纹柱体切刀
-    return hole.Shape, body
+    # 返回 Body 和 Hole 对象名，用于 make_cut
+    return body.Name, hole.Name, body
 
 
 def main():
@@ -375,12 +375,12 @@ def main():
 
     doc.openTransaction("Threaded Rod")
     try:
-        # ── 步骤 1: 创建螺纹切刀体 (Hole.Shape) ──
+        # ── 步骤 1: 创建螺纹切刀体 (Body + Hole with ModelThread) ──
         cutter_radius = nom_diameter / 2.0 + max(pitch * 2, 5.0)
-        cutter_shape, cutter_body = create_thread_cutter(
+        cutter_body_name, cutter_hole_name, cutter_body = create_thread_cutter(
             doc, nom_diameter, pitch, thread_length, cutter_radius)
 
-        # ── 步骤 2: 将切刀移动到用户圆柱的位置 ──
+        # ── 步骤 2: b ody 移动到用户圆柱位置/角度 ──
         axis = face_info['axis']
         start_pt = face_info['axis_start']
         z_axis = Vector(0, 0, 1)
@@ -400,32 +400,14 @@ def main():
         twist = App.Rotation(axis, 37.5)
         placement.Rotation = twist.multiply(placement.Rotation)
 
-        # 把 Hole.Shape 放到正确位置
-        cutter_placed = doc.addObject("Part::Feature", "_ThreadCutterPlaced")
-        cutter_placed.Shape = cutter_shape
-        cutter_placed.Placement = placement
-        cutter_placed.Visibility = False
+        cutter_body.Placement = placement
         doc.recompute()
 
-        # ── 步骤 3: BOPFeatures.make_cut — 用户圆柱 减去 螺纹切刀 = 外螺纹 ──
-        # 先把 source_obj 从 Body 临时移出，避免 make_cut 把 Cut 移入 Body 报错
-        saved_group = None
-        try:
-            p = source_obj.getParent()
-            if p is not None:
-                saved_group = p
-                p.removeObject(source_obj)
-        except Exception:
-            pass
-
+        # ── 步骤 3: make_cut([Body, _CutterHole]) — 用户圆柱 减去 螺纹切刀 ──
         from BOPTools import BOPFeatures
         bp = BOPFeatures.BOPFeatures(doc)
-        cut_obj = bp.make_cut([source_obj.Name, cutter_placed.Name])
+        cut_obj = bp.make_cut([body.Name, cutter_hole_name])
         doc.recompute()
-
-        # 把 source_obj 移回原来的 Group
-        if saved_group is not None:
-            saved_group.addObject(source_obj)
 
         result_shape = cut_obj.Shape
         if result_shape is None or result_shape.isNull():
@@ -447,7 +429,6 @@ def main():
 
         # ── 步骤 5: 删除临时对象 ──
         doc.removeObject(cut_obj.Name)
-        doc.removeObject(cutter_placed.Name)
         doc.removeObject(cutter_body.Name)
         doc.recompute()
 
