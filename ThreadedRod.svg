@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#888"/>
+      <stop offset="50%" stop-color="#ccc"/>
+      <stop offset="100%" stop-color="#777"/>
+    </linearGradient>
+    <linearGradient id="head" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#aaa"/>
+      <stop offset="100%" stop-color="#999"/>
+    </linearGradient>
+  </defs>
+  <!-- 螺丝柱杆体 -->
+  <rect x="22" y="14" width="20" height="42" rx="1" fill="url(#body)" stroke="#555" stroke-width="1.5"/>
+  <!-- 螺纹线 -->
+  <line x1="22" y1="20" x2="42" y2="24" stroke="#666" stroke-width="1" opacity="0.8"/>
+  <line x1="22" y1="26" x2="42" y2="30" stroke="#666" stroke-width="1" opacity="0.8"/>
+  <line x1="22" y1="32" x2="42" y2="36" stroke="#666" stroke-width="1" opacity="0.8"/>
+  <line x1="22" y1="38" x2="42" y2="42" stroke="#666" stroke-width="1" opacity="0.8"/>
+  <line x1="22" y1="44" x2="42" y2="48" stroke="#666" stroke-width="1" opacity="0.8"/>
+  <!-- 螺丝头 -->
+  <rect x="14" y="8" width="36" height="10" rx="1.5" fill="url(#head)" stroke="#555" stroke-width="1.5"/>
+  <!-- 螺丝头十字槽 -->
+  <line x1="22" y1="8" x2="42" y2="18" stroke="#777" stroke-width="1.5"/>
+  <line x1="42" y1="8" x2="22" y2="18" stroke="#777" stroke-width="1.5"/>
+</svg>

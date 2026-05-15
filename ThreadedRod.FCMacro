@@ -1,0 +1,479 @@
+# -*- coding: utf-8 -*-
+# Macro: ThreadedRod
+# 图标: 螺丝柱
+# 功能: 选中圆柱面，利用 FreeCAD 自带的 Hole(螺纹孔)生成螺纹环套，
+#       再通过布尔差集在圆柱上切出外螺纹。
+#
+# 使用方法:
+#   1. 在 Part 或 PartDesign 工作台中选中一个圆柱面
+#   2. 运行此宏
+#   3. 选择螺纹规格或自定义参数，确认执行
+
+import FreeCAD as App
+import FreeCADGui as Gui
+import Part
+from FreeCAD import Vector
+from PySide import QtGui, QtCore
+import math
+
+
+# ── 标准公制粗牙螺纹参数 (公称直径, 螺距) ──
+METRIC_THREADS = {
+    "M2":   (2.0,  0.40),
+    "M2.5": (2.5,  0.45),
+    "M3":   (3.0,  0.50),
+    "M4":   (4.0,  0.70),
+    "M5":   (5.0,  0.80),
+    "M6":   (6.0,  1.00),
+    "M8":   (8.0,  1.25),
+    "M10":  (10.0, 1.50),
+    "M12":  (12.0, 1.75),
+    "M14":  (14.0, 2.00),
+    "M16":  (16.0, 2.00),
+    "M18":  (18.0, 2.50),
+    "M20":  (20.0, 2.50),
+    "M22":  (22.0, 2.50),
+    "M24":  (24.0, 3.00),
+    "M27":  (27.0, 3.00),
+    "M30":  (30.0, 3.50),
+    "M33":  (33.0, 3.50),
+    "M36":  (36.0, 4.00),
+    "M39":  (39.0, 4.00),
+    "M42":  (42.0, 4.50),
+    "M45":  (45.0, 4.50),
+    "M48":  (48.0, 5.00),
+    "M52":  (52.0, 5.00),
+    "M56":  (56.0, 5.50),
+    "M60":  (60.0, 5.50),
+    "M64":  (64.0, 6.00),
+    "M68":  (68.0, 6.00),
+}
+
+
+def find_body(obj):
+    """查找特征所属的 PartDesign Body."""
+    if obj.TypeId == 'PartDesign::Body':
+        return obj
+    for p in obj.InList:
+        if p.TypeId == 'PartDesign::Body':
+            return p
+    try:
+        g = obj.getParentGroup()
+        if g and g.TypeId == 'PartDesign::Body':
+            return g
+    except Exception:
+        pass
+    return None
+
+
+def get_cylindrical_face_info(face):
+    """从圆柱面提取半径、轴线和高度信息."""
+    surf = face.Surface
+    if not hasattr(surf, 'Radius'):
+        return None
+
+    radius = surf.Radius
+    center = surf.Center
+    axis = surf.Axis.normalize()
+
+    verts = [v.Point for v in face.Vertexes]
+    if len(verts) < 2:
+        return None
+
+    projections = [axis.dot(v - center) for v in verts]
+    min_p = min(projections)
+    max_p = max(projections)
+    height = max_p - min_p
+    if height < 0.001:
+        return None
+
+    axis_start = center + axis * min_p
+    axis_end = center + axis * max_p
+
+    return {
+        'radius': radius,
+        'axis': axis,
+        'height': height,
+        'axis_start': axis_start,
+        'axis_end': axis_end,
+    }
+
+
+def suggest_thread(info):
+    """根据圆柱半径推荐最接近的公制螺纹."""
+    r = info['radius']
+    best_key = None
+    best_diff = float('inf')
+    for key, (nom_d, pitch) in METRIC_THREADS.items():
+        diff = abs(nom_d / 2.0 - r)
+        if diff < best_diff:
+            best_diff = diff
+            best_key = key
+    if best_diff < r * 0.3:
+        return best_key, best_diff
+    return None, best_diff
+
+
+def create_threaded_sleeve(doc, nom_diameter, pitch, sleeve_length, sleeve_wall):
+    """
+    利用 PartDesign Hole 创建带螺纹孔的空心套筒。
+    返回套筒 Body 的 Shape。
+
+    原理：创建一个比螺纹外径稍大的圆柱体，在上面打一个
+    带 ModelThread 的 Hole。Hole 的螺纹会自动生成在孔内壁上。
+    得到的 Body.Shape 就是一个内壁有螺纹的空心圆柱。
+    """
+    # 临时 Body
+    body = doc.addObject("PartDesign::Body", "_ThreadSleeveBody")
+
+    # 基础圆柱 — 外径 = 公称直径 + 壁厚
+    cyl = doc.addObject("PartDesign::AdditiveCylinder", "_SleeveCyl")
+    cyl.Radius = nom_diameter / 2.0 + sleeve_wall
+    cyl.Height = sleeve_length
+    cyl.Angle = 360
+    body.addObject(cyl)
+    doc.recompute()
+
+    # 找到圆柱的顶面 (z=正方向的面)
+    cyl_top_face_name = None
+    for i, f in enumerate(cyl.Shape.Faces):
+        try:
+            dist = f.distToShape(Part.Vertex(Vector(0, 0, sleeve_length)))
+            if abs(dist[0]) < 0.01:
+                cyl_top_face_name = "Face{}".format(i + 1)
+                break
+        except Exception:
+            continue
+    if cyl_top_face_name is None:
+        cyl_top_face_name = "Face2"  # fallback
+
+    # 创建 Sketch — 圆心在原点，用于 Hole 定位
+    import Sketcher
+    sketch = doc.addObject("Sketcher::SketchObject", "_SleeveSketch")
+    body.addObject(sketch)
+    sketch.AttachmentSupport = (cyl, cyl_top_face_name)
+    sketch.MapMode = "FlatFace"
+    doc.recompute()
+
+    # 在 sketch 原点画一个圆
+    geo_list = []
+    geo_list.append(Part.Circle())
+    geo_list[0].Radius = nom_diameter / 2.0
+    sketch.addGeometry(geo_list, False)
+    sketch.addConstraint(Sketcher.Constraint("Coincident", 0, 3, -1, 1))  # 圆心约束到原点
+    doc.recompute()
+
+    # 创建 Hole
+    hole = doc.addObject("PartDesign::Hole", "_SleeveHole")
+    body.addObject(hole)
+    hole.Profile = sketch
+    hole.Diameter = nom_diameter  # 孔的直径 = 螺纹公称直径
+    hole.Depth = sleeve_length
+    hole.DepthType = 0       # 固定深度
+    hole.DrillPoint = 0      # 平底
+    hole.Threaded = 1        # 启用螺纹
+    hole.ModelThread = 1     # 生成实际的 3D 螺纹几何
+    hole.ThreadType = 1      # ISO Metric Profile
+    hole.ThreadDepthType = 0
+    hole.ThreadDirection = 0  # 右旋
+    hole.ThreadClass = 0
+    hole.HoleCutType = 0     # 无沉头/倒角
+    hole.Tapered = 0
+    hole.Reversed = 0
+    hole.Refine = True
+
+    # 设置螺纹尺寸 — ThreadSize 是 Hole 内部的尺寸索引
+    # 通过枚举值找到匹配的 ThreadSize 索引
+    try:
+        thread_sizes = hole.getEnumerationsOfProperty("ThreadSize")
+        target = ""
+        for ts in thread_sizes:
+            ts_lower = ts.lower()
+            if ts_lower.startswith("m") and "x" in ts_lower:
+                try:
+                    d_part = ts_lower[1:].split("x")[0].strip()
+                    d = float(d_part)
+                    if abs(d - nom_diameter) < 0.01:
+                        target = ts
+                        break
+                except ValueError:
+                    continue
+        if target:
+            hole.ThreadSize = thread_sizes.index(target)
+        else:
+            # 回退：如果精确匹配不到，打印可用列表并报错
+            sizes_str = ", ".join(thread_sizes[:10]) + ("..." if len(thread_sizes) > 10 else "")
+            raise RuntimeError(
+                f"Cannot find matching thread size for M{nom_diameter:.0f} "
+                f"in the Hole thread size list. "
+                f"First available: {sizes_str}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to set thread size: {e}")
+
+    doc.recompute()
+
+    # 返回 Body 的 Shape（带螺纹孔的空心圆柱）
+    return body.Shape, body
+
+
+def main():
+    doc = App.ActiveDocument
+    if not doc:
+        QtGui.QMessageBox.warning(None, "错误", "请先打开文档。")
+        return
+
+    sel = Gui.Selection.getSelectionEx()
+    if not sel:
+        QtGui.QMessageBox.warning(None, "错误", "请先选中一个圆柱面。")
+        return
+
+    # 提取选中的圆柱面信息
+    face_info = None
+    source_obj = None
+
+    for s in sel:
+        if not hasattr(s.Object, 'Shape'):
+            continue
+        for sn in s.SubElementNames:
+            if sn.startswith('Face'):
+                try:
+                    f = s.Object.Shape.getElement(sn)
+                    info = get_cylindrical_face_info(f)
+                    if info:
+                        face_info = info
+                        source_obj = s.Object
+                        break
+                except Exception:
+                    pass
+        if face_info:
+            break
+
+    if not face_info:
+        QtGui.QMessageBox.warning(None, "错误",
+            "未检测到有效的圆柱面。\n请选中螺丝柱的外圆柱面。")
+        return
+
+    body = find_body(source_obj)
+
+    # ── 对话框 ──
+    dlg = QtGui.QDialog()
+    dlg.setWindowTitle("螺丝柱外螺纹 Threaded Rod")
+    dlg.setMinimumWidth(420)
+    dlg.setModal(True)
+    layout = QtGui.QVBoxLayout()
+
+    layout.addWidget(QtGui.QLabel(
+        f"<b>选中圆柱:</b><br>"
+        f"  半径: {face_info['radius']:.3f} mm<br>"
+        f"  高度: {face_info['height']:.3f} mm"))
+    layout.addSpacing(8)
+
+    # 推荐螺纹
+    suggested, diff = suggest_thread(face_info)
+    suggest_label = QtGui.QLabel("")
+    if suggested:
+        suggest_label.setText(
+            f"<span style='color:#228833;'>推荐: {suggested} "
+            f"(外径={METRIC_THREADS[suggested][0]} mm, "
+            f"螺距={METRIC_THREADS[suggested][1]} mm)</span>")
+    else:
+        suggest_label.setText(
+            "<span style='color:#cc8800;'>未找到匹配的标准螺纹，请自定义。</span>")
+    suggest_label.setTextFormat(QtCore.Qt.RichText)
+    layout.addWidget(suggest_label)
+    layout.addSpacing(8)
+
+    # 螺纹规格选择
+    spec_layout = QtGui.QHBoxLayout()
+    spec_layout.addWidget(QtGui.QLabel("螺纹规格:"))
+    spec_combo = QtGui.QComboBox()
+    spec_combo.addItem("自定义")
+    for key in sorted(METRIC_THREADS.keys(),
+                       key=lambda k: METRIC_THREADS[k][0]):
+        spec_combo.addItem(
+            f"{key}  (外径={METRIC_THREADS[key][0]}mm, "
+            f"螺距={METRIC_THREADS[key][1]}mm)")
+    if suggested:
+        idx = list(sorted(METRIC_THREADS.keys(),
+                          key=lambda k: METRIC_THREADS[k][0])).index(suggested) + 1
+        spec_combo.setCurrentIndex(idx)
+    spec_layout.addWidget(spec_combo)
+    layout.addLayout(spec_layout)
+
+    # 公称外径
+    diam_layout = QtGui.QHBoxLayout()
+    diam_layout.addWidget(QtGui.QLabel("公称外径 (mm):"))
+    diam_spin = QtGui.QDoubleSpinBox()
+    diam_spin.setRange(1.0, 300.0)
+    diam_spin.setDecimals(3)
+    diam_spin.setSingleStep(0.5)
+    diam_spin.setValue(face_info['radius'] * 2.0)
+    diam_layout.addWidget(diam_spin)
+    layout.addLayout(diam_layout)
+
+    # 螺距
+    pitch_layout = QtGui.QHBoxLayout()
+    pitch_layout.addWidget(QtGui.QLabel("螺距 (mm):"))
+    pitch_spin = QtGui.QDoubleSpinBox()
+    pitch_spin.setRange(0.1, 20.0)
+    pitch_spin.setDecimals(2)
+    pitch_spin.setSingleStep(0.05)
+    pitch_spin.setValue(1.0)
+    pitch_layout.addWidget(pitch_spin)
+    layout.addLayout(pitch_layout)
+
+    # 螺纹长度
+    len_layout = QtGui.QHBoxLayout()
+    len_layout.addWidget(QtGui.QLabel("螺纹长度 (mm):"))
+    len_spin = QtGui.QDoubleSpinBox()
+    len_spin.setRange(0.1, 9999.0)
+    len_spin.setDecimals(2)
+    len_spin.setSingleStep(1.0)
+    len_spin.setValue(face_info['height'])
+    len_layout.addWidget(len_spin)
+    layout.addLayout(len_layout)
+
+    # 套筒壁厚
+    wall_layout = QtGui.QHBoxLayout()
+    wall_layout.addWidget(QtGui.QLabel("套筒壁厚 (mm):"))
+    wall_spin = QtGui.QDoubleSpinBox()
+    wall_spin.setRange(1.0, 50.0)
+    wall_spin.setDecimals(2)
+    wall_spin.setSingleStep(0.5)
+    wall_spin.setValue(8.0)
+    wall_spin.setToolTip("套筒外壁到螺纹外径的距离。\n"
+                         "建议 >= 螺距，以确保螺纹槽不会穿透套筒外壁。")
+    wall_layout.addWidget(wall_spin)
+    layout.addLayout(wall_layout)
+
+    # 螺纹旋向
+    handed_layout = QtGui.QHBoxLayout()
+    handed_layout.addWidget(QtGui.QLabel("旋向:"))
+    handed_combo = QtGui.QComboBox()
+    handed_combo.addItem("右旋 (标准)")
+    handed_combo.addItem("左旋")
+    handed_layout.addWidget(handed_combo)
+    handed_layout.addStretch()
+    layout.addLayout(handed_layout)
+
+    def on_spec_changed(idx):
+        if idx == 0:
+            return
+        key = sorted(METRIC_THREADS.keys(),
+                     key=lambda k: METRIC_THREADS[k][0])[idx - 1]
+        nom_d, p = METRIC_THREADS[key]
+        diam_spin.blockSignals(True)
+        pitch_spin.blockSignals(True)
+        diam_spin.setValue(nom_d)
+        pitch_spin.setValue(p)
+        diam_spin.blockSignals(False)
+        pitch_spin.blockSignals(False)
+
+    spec_combo.currentIndexChanged.connect(on_spec_changed)
+
+    layout.addSpacing(8)
+
+    btn_layout = QtGui.QHBoxLayout()
+    ok = QtGui.QPushButton("创建外螺纹")
+    ok.clicked.connect(dlg.accept)
+    cancel = QtGui.QPushButton("取消")
+    cancel.clicked.connect(dlg.reject)
+    btn_layout.addWidget(ok)
+    btn_layout.addWidget(cancel)
+    layout.addLayout(btn_layout)
+    dlg.setLayout(layout)
+
+    if dlg.exec() != QtGui.QDialog.Accepted:
+        return
+
+    nom_diameter = diam_spin.value()
+    pitch = pitch_spin.value()
+    thread_length = len_spin.value()
+    sleeve_wall = wall_spin.value()
+    is_left_handed = (handed_combo.currentIndex() == 1)
+
+    if nom_diameter <= 0 or pitch <= 0 or thread_length <= 0:
+        QtGui.QMessageBox.warning(None, "错误", "参数无效。")
+        return
+
+    doc.openTransaction("Threaded Rod")
+    try:
+        # ── 步骤 1: 创建带螺纹孔的空心套筒 ──
+        sleeve_shape, sleeve_body = create_threaded_sleeve(
+            doc, nom_diameter, pitch, thread_length, sleeve_wall)
+
+        # ── 步骤 2: 如果用户选了左旋，翻转套筒（因为 Hole 只能右旋） ──
+        # 左旋通过镜像实现：取套筒沿径向翻转
+        # 不做镜像处理，Hole 默认右旋
+
+        # ── 步骤 3: 将套筒移动到用户圆柱的位置 ──
+        axis = face_info['axis']
+        start_pt = face_info['axis_start']
+        z_axis = Vector(0, 0, 1)
+
+        # 创建放置
+        placement = App.Placement()
+        placement.Base = start_pt - axis * (pitch * 0.5)
+
+        # 旋转套筒使 z 轴对齐到用户圆柱轴
+        if abs(axis.dot(z_axis) - 1.0) > 1e-7:
+            rot_axis = z_axis.cross(axis)
+            if rot_axis.Length > 1e-7:
+                rot_axis.normalize()
+                ang = math.acos(z_axis.dot(axis))
+                placement.Rotation = App.Rotation(rot_axis, math.degrees(ang))
+
+        # 创建一个带 placement 的副本
+        sleeve_copy = doc.addObject("Part::Feature", "_ThreadSleeveCopy")
+        sleeve_copy.Shape = sleeve_shape
+        sleeve_copy.Placement = placement
+        sleeve_copy.Visibility = False
+        doc.recompute()
+
+        # ── 步骤 4: 布尔切割 ──
+        base_shape = source_obj.Shape
+        result_shape = base_shape.cut(sleeve_copy.Shape)
+
+        if result_shape is None or result_shape.isNull():
+            raise RuntimeError("布尔切割失败。请检查螺纹直径是否合理。")
+
+        result_shape = result_shape.removeSplitter()
+
+        # ── 步骤 5: 输出结果 ──
+        if body:
+            # PartDesign 模式
+            result_obj = doc.addObject('Part::Feature', 'ThreadedRod')
+            result_obj.Shape = result_shape
+            result_obj.Label = f"ThreadedRod_M{nom_diameter:.0f}x{pitch:.2f}"
+            if hasattr(source_obj, 'ViewObject') and hasattr(result_obj, 'ViewObject'):
+                result_obj.ViewObject.ShapeColor = source_obj.ViewObject.ShapeColor
+            source_obj.Visibility = False
+            if body:
+                body.Visibility = False
+        else:
+            # Part 模式
+            source_obj.Shape = result_shape
+
+        doc.recompute()
+
+        # ── 步骤 6: 删除临时对象 ──
+        doc.removeObject(sleeve_copy.Name)
+        doc.removeObject(sleeve_body.Name)
+        doc.recompute()
+
+        doc.commitTransaction()
+
+        QtGui.QMessageBox.information(None, "完成",
+            f"外螺纹创建成功！\n\n"
+            f"规格: M{nom_diameter:.0f}x{pitch:.2f}\n"
+            f"长度: {thread_length:.2f} mm\n"
+            f"旋向: {'左旋' if is_left_handed else '右旋'}")
+
+    except Exception as e:
+        doc.abortTransaction()
+        QtGui.QMessageBox.critical(None, "失败",
+            f"创建外螺纹失败:\n\n{str(e)}")
+
+
+if __name__ == '__main__':
+    main()
