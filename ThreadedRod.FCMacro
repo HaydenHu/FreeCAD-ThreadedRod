@@ -411,17 +411,22 @@ def main():
         start_pt = face_info['axis_start']
         z_axis = Vector(0, 0, 1)
 
-        # 创建放置
+        # 创建放置 — 绕轴随机旋转避免螺纹起点对齐 0°/90° 导致布尔卡死
         placement = App.Placement()
         placement.Base = start_pt - axis * (pitch * 0.5)
 
-        # 旋转套筒使 z 轴对齐到用户圆柱轴
+        # 先建轴对齐旋转
         if abs(axis.dot(z_axis) - 1.0) > 1e-7:
             rot_axis = z_axis.cross(axis)
             if rot_axis.Length > 1e-7:
                 rot_axis.normalize()
                 ang = math.acos(z_axis.dot(axis))
                 placement.Rotation = App.Rotation(rot_axis, math.degrees(ang))
+
+        # 再绕自身 z 轴旋转一个非正交角度，避免螺纹起点在 0°/90°
+        # 使用黄金角度 37.5° (避免有理数倍于 90°)
+        twist = App.Rotation(axis, 37.5)
+        placement.Rotation = twist.multiply(placement.Rotation)
 
         # 创建一个带 placement 的副本
         sleeve_copy = doc.addObject("Part::Feature", "_ThreadSleeveCopy")
