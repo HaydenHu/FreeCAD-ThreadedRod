@@ -403,10 +403,16 @@ def main():
         cutter_body.Placement = placement
         doc.recompute()
 
-        # ── 步骤 3: make_cut([Body, _CutterHole]) — 用户圆柱 减去 螺纹切刀 ──
+        # ── 步骤 3: Part::Cut — Body 减去 CutterHole = 外螺纹 ──
+        # 使用 BOPFeatures 的模式但跳过 move_input_objects（避免 Body 拒绝 Part::Cut）
         from BOPTools import BOPFeatures
         bp = BOPFeatures.BOPFeatures(doc)
-        cut_obj = bp.make_cut([body.Name, cutter_hole_name])
+        cut_obj = doc.addObject("Part::Cut", "_ThreadCut")
+        cut_obj.Base = doc.getObject(body.Name)
+        cut_obj.Tool = doc.getObject(cutter_hole_name)
+        bp.copy_visual_attributes(cut_obj, cut_obj.Base)
+        cut_obj.Base.Visibility = False
+        cut_obj.Tool.Visibility = False
         doc.recompute()
 
         result_shape = cut_obj.Shape
