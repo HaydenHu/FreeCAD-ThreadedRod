@@ -407,10 +407,10 @@ def main():
         cutter_placed.Visibility = False
         doc.recompute()
 
-        # ── 步骤 3: Part::Cut — 用户圆柱 减去 螺纹切刀 = 外螺纹 ──
-        cut_obj = doc.addObject("Part::Cut", "_ThreadCut")
-        cut_obj.Base = source_obj
-        cut_obj.Tool = cutter_placed
+        # ── 步骤 3: BOPFeatures.make_cut — 用户圆柱 减去 螺纹切刀 = 外螺纹 ──
+        from BOPTools import BOPFeatures
+        bp = BOPFeatures.BOPFeatures(doc)
+        cut_obj = bp.make_cut([source_obj.Name, cutter_placed.Name])
         doc.recompute()
 
         result_shape = cut_obj.Shape
