@@ -419,23 +419,16 @@ def main():
         if result_shape is None or result_shape.isNull():
             raise RuntimeError("布尔切割失败。请检查螺纹直径是否合理。")
 
-        result_shape = result_shape.removeSplitter()
-
-        # ── 步骤 4: 输出结果 ──
-        result_obj = doc.addObject('Part::Feature', 'ThreadedRod')
-        result_obj.Shape = result_shape
-        result_obj.Label = f"ThreadedRod_M{nom_diameter:.0f}x{pitch:.2f}"
-        if hasattr(source_obj, 'ViewObject') and hasattr(result_obj, 'ViewObject'):
-            result_obj.ViewObject.ShapeColor = source_obj.ViewObject.ShapeColor
-        source_obj.Visibility = False
+        # ── 步骤 4: 重命名 Cut 对象并隐藏原始 Body ──
+        cut_obj.Label = f"ThreadedRod_M{nom_diameter:.0f}x{pitch:.2f}"
+        if hasattr(source_obj, 'ViewObject') and hasattr(cut_obj, 'ViewObject'):
+            cut_obj.ViewObject.ShapeColor = source_obj.ViewObject.ShapeColor
         if body:
             body.Visibility = False
 
-        doc.recompute()
+        # 隐藏临时 cutter body（但保留它，Cut 依赖它）
+        cutter_body.Visibility = False
 
-        # ── 步骤 5: 删除临时对象 ──
-        doc.removeObject(cut_obj.Name)
-        doc.removeObject(cutter_body.Name)
         doc.recompute()
 
         doc.commitTransaction()
