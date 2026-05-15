@@ -407,29 +407,32 @@ def main():
         cutter_placed.Visibility = False
         doc.recompute()
 
-        # ── 步骤 3: 用户圆柱 .cut(Sleeve Hole) = 外螺纹 ──
-        result_shape = source_obj.Shape.cut(cutter_placed.Shape)
+        # ── 步骤 3: Part::Cut — 用户圆柱 减去 螺纹切刀 = 外螺纹 ──
+        cut_obj = doc.addObject("Part::Cut", "_ThreadCut")
+        cut_obj.Base = source_obj
+        cut_obj.Tool = cutter_placed
+        doc.recompute()
 
+        result_shape = cut_obj.Shape
         if result_shape is None or result_shape.isNull():
             raise RuntimeError("布尔切割失败。请检查螺纹直径是否合理。")
 
         result_shape = result_shape.removeSplitter()
 
         # ── 步骤 4: 输出结果 ──
+        result_obj = doc.addObject('Part::Feature', 'ThreadedRod')
+        result_obj.Shape = result_shape
+        result_obj.Label = f"ThreadedRod_M{nom_diameter:.0f}x{pitch:.2f}"
+        if hasattr(source_obj, 'ViewObject') and hasattr(result_obj, 'ViewObject'):
+            result_obj.ViewObject.ShapeColor = source_obj.ViewObject.ShapeColor
+        source_obj.Visibility = False
         if body:
-            result_obj = doc.addObject('Part::Feature', 'ThreadedRod')
-            result_obj.Shape = result_shape
-            result_obj.Label = f"ThreadedRod_M{nom_diameter:.0f}x{pitch:.2f}"
-            if hasattr(source_obj, 'ViewObject') and hasattr(result_obj, 'ViewObject'):
-                result_obj.ViewObject.ShapeColor = source_obj.ViewObject.ShapeColor
-            source_obj.Visibility = False
             body.Visibility = False
-        else:
-            source_obj.Shape = result_shape
 
         doc.recompute()
 
         # ── 步骤 5: 删除临时对象 ──
+        doc.removeObject(cut_obj.Name)
         doc.removeObject(cutter_placed.Name)
         doc.removeObject(cutter_body.Name)
         doc.recompute()
