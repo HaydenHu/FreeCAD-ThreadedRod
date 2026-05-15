@@ -407,9 +407,8 @@ def main():
         cutter_placed.Visibility = False
         doc.recompute()
 
-        # ── 步骤 3: 用户圆柱 .cut(Hole.Shape) = 外螺纹 ──
-        base_shape = source_obj.Shape
-        result_shape = base_shape.cut(cutter_placed.Shape)
+        # ── 步骤 3: 用户圆柱 Part.cut(Sleeve Hole) = 外螺纹 ──
+        result_shape = Part.cut(source_obj.Shape, cutter_placed.Shape)
 
         if result_shape is None or result_shape.isNull():
             raise RuntimeError("布尔切割失败。请检查螺纹直径是否合理。")
