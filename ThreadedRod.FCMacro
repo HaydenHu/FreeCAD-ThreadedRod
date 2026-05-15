@@ -407,12 +407,25 @@ def main():
         cutter_placed.Visibility = False
         doc.recompute()
 
-        # ── 步骤 3: Part::Cut — 用户圆柱 减去 螺纹切刀 = 外螺纹 ──
-        # 不用 BOPFeatures.make_cut，因为它会尝试把 Cut 移入 PartDesign Body 而报错
-        cut_obj = doc.addObject("Part::Cut", "_ThreadCut")
-        cut_obj.Base = source_obj
-        cut_obj.Tool = cutter_placed
+        # ── 步骤 3: BOPFeatures.make_cut — 用户圆柱 减去 螺纹切刀 = 外螺纹 ──
+        # 先把 source_obj 从 Body 临时移出，避免 make_cut 把 Cut 移入 Body 报错
+        saved_group = None
+        try:
+            p = source_obj.getParent()
+            if p is not None:
+                saved_group = p
+                p.removeObject(source_obj)
+        except Exception:
+            pass
+
+        from BOPTools import BOPFeatures
+        bp = BOPFeatures.BOPFeatures(doc)
+        cut_obj = bp.make_cut([source_obj.Name, cutter_placed.Name])
         doc.recompute()
+
+        # 把 source_obj 移回原来的 Group
+        if saved_group is not None:
+            saved_group.addObject(source_obj)
 
         result_shape = cut_obj.Shape
         if result_shape is None or result_shape.isNull():
