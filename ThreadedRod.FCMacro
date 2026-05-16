@@ -294,24 +294,73 @@ def main():
     layout.addWidget(suggest_label)
     layout.addSpacing(8)
 
-    # 螺纹规格选择
-    spec_layout = QtGui.QHBoxLayout()
-    spec_layout.addWidget(QtGui.QLabel("螺纹规格:"))
-    spec_combo = QtGui.QComboBox()
-    spec_combo.addItem("自定义")
-    for key in sorted(METRIC_THREADS.keys(),
-                       key=lambda k: METRIC_THREADS[k][0]):
-        spec_combo.addItem(
-            f"{key}  (外径={METRIC_THREADS[key][0]}mm, "
-            f"螺距={METRIC_THREADS[key][1]}mm)")
-    if suggested:
-        idx = list(sorted(METRIC_THREADS.keys(),
-                          key=lambda k: METRIC_THREADS[k][0])).index(suggested) + 1
-        spec_combo.setCurrentIndex(idx)
-    spec_layout.addWidget(spec_combo)
-    layout.addLayout(spec_layout)
+    # ── 从 Hole 获取粗牙/细牙的实际 ThreadSize 枚举 ──
+    dummy_doc = App.newDocument("_ThreadTemp")
+    dummy_body = dummy_doc.addObject("PartDesign::Body", "_TmpBody")
+    dummy_cyl = dummy_doc.addObject("PartDesign::AdditiveCylinder", "_TmpCyl")
+    dummy_cyl.Radius = 10; dummy_cyl.Height = 10
+    dummy_body.addObject(dummy_cyl)
+    dummy_sk = dummy_doc.addObject("Sketcher::SketchObject", "_TmpSk")
+    dummy_body.addObject(dummy_sk)
+    dummy_sk.AttachmentSupport = (dummy_cyl, "Face2")
+    dummy_sk.MapMode = "FlatFace"
+    dummy_doc.recompute()
+    dummy_hole = dummy_doc.addObject("PartDesign::Hole", "_TmpHole")
+    dummy_body.addObject(dummy_hole)
+    dummy_hole.Profile = dummy_sk
+    dummy_hole.Threaded = 1
 
-    # 公称外径
+    # 粗牙
+    dummy_hole.ThreadType = 1
+    coarse_sizes = dummy_hole.getEnumerationsOfProperty("ThreadSize")
+    # 细牙
+    dummy_hole.ThreadType = 2
+    fine_sizes = dummy_hole.getEnumerationsOfProperty("ThreadSize")
+    App.closeDocument(dummy_doc.Name)
+
+    # ── 解析外径/螺距 ──
+    def parse_thread_sizes(sizes):
+        result = []
+        for s in sizes:
+            sl = s.lower()
+            if sl.startswith("m") and "x" in sl:
+                try:
+                    parts = sl[1:].split("x")
+                    d = float(parts[0].strip())
+                    p = float(parts[1].strip())
+                    result.append((s, d, p))
+                except (ValueError, IndexError):
+                    continue
+        return sorted(result, key=lambda x: x[1])
+
+    coarse_parsed = parse_thread_sizes(coarse_sizes)
+    fine_parsed = parse_thread_sizes(fine_sizes)
+
+    # ── 标准选择 — ThreadType ──
+    type_layout = QtGui.QHBoxLayout()
+    type_layout.addWidget(QtGui.QLabel("标准:"))
+    type_combo = QtGui.QComboBox()
+    type_combo.addItem("自定义")
+    type_combo.addItem("ISO 公制粗牙 (ISO Metric Coarse)")
+    type_combo.addItem("ISO 公制细牙 (ISO Metric Fine)")
+    type_layout.addWidget(type_combo)
+    type_layout.addStretch()
+    layout.addLayout(type_layout)
+
+    # ── 标准选择 — ThreadSize ──
+    size_layout = QtGui.QHBoxLayout()
+    size_layout.addWidget(QtGui.QLabel("大小:"))
+    size_combo = QtGui.QComboBox()
+    size_combo.setMinimumWidth(200)
+    size_layout.addWidget(size_combo)
+    size_layout.addStretch()
+    layout.addLayout(size_layout)
+
+    # ── 自定义参数（标准模式下隐藏，自定义模式显示） ──
+    custom_widget = QtGui.QWidget()
+    custom_layout = QtGui.QVBoxLayout()
+    custom_layout.setContentsMargins(0, 0, 0, 0)
+
     diam_layout = QtGui.QHBoxLayout()
     diam_layout.addWidget(QtGui.QLabel("公称外径 (mm):"))
     diam_spin = QtGui.QDoubleSpinBox()
@@ -320,9 +369,8 @@ def main():
     diam_spin.setSingleStep(0.5)
     diam_spin.setValue(face_info['radius'] * 2.0)
     diam_layout.addWidget(diam_spin)
-    layout.addLayout(diam_layout)
+    custom_layout.addLayout(diam_layout)
 
-    # 螺距
     pitch_layout = QtGui.QHBoxLayout()
     pitch_layout.addWidget(QtGui.QLabel("螺距 (mm):"))
     pitch_spin = QtGui.QDoubleSpinBox()
@@ -331,7 +379,51 @@ def main():
     pitch_spin.setSingleStep(0.05)
     pitch_spin.setValue(1.0)
     pitch_layout.addWidget(pitch_spin)
-    layout.addLayout(pitch_layout)
+    custom_layout.addLayout(pitch_layout)
+
+    custom_widget.setLayout(custom_layout)
+    layout.addWidget(custom_widget)
+
+    # ── 设置 ThreadSize 列表 ──
+    def set_size_combo(parsed_list, select_d=None):
+        size_combo.clear()
+        for s, d, p in parsed_list:
+            size_combo.addItem(f"M{d:.0f}×{p:.2f}  (外径={d}mm, 螺距={p}mm)")
+        # 选中最接近建议的
+        if select_d is not None and len(parsed_list) > 0:
+            best_i = 0
+            best_diff = float('inf')
+            for i, (s, d, p) in enumerate(parsed_list):
+                diff = abs(d - select_d)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_i = i
+            size_combo.setCurrentIndex(best_i)
+
+    # 推荐直径
+    suggested_d = face_info['radius'] * 2.0
+    if suggested:
+        suggested_d = METRIC_THREADS[suggested][0]
+
+    # 默认选粗牙
+    type_combo.setCurrentIndex(1)
+    set_size_combo(coarse_parsed, suggested_d)
+
+    def on_type_changed(idx):
+        if idx == 0:
+            size_combo.setEnabled(False)
+            custom_widget.setVisible(True)
+            size_combo.clear()
+        elif idx == 1:
+            size_combo.setEnabled(True)
+            custom_widget.setVisible(False)
+            set_size_combo(coarse_parsed, suggested_d)
+        elif idx == 2:
+            size_combo.setEnabled(True)
+            custom_widget.setVisible(False)
+            set_size_combo(fine_parsed, suggested_d)
+
+    type_combo.currentIndexChanged.connect(on_type_changed)
 
     # 螺纹长度
     len_layout = QtGui.QHBoxLayout()
@@ -354,21 +446,6 @@ def main():
     handed_layout.addStretch()
     layout.addLayout(handed_layout)
 
-    def on_spec_changed(idx):
-        if idx == 0:
-            return
-        key = sorted(METRIC_THREADS.keys(),
-                     key=lambda k: METRIC_THREADS[k][0])[idx - 1]
-        nom_d, p = METRIC_THREADS[key]
-        diam_spin.blockSignals(True)
-        pitch_spin.blockSignals(True)
-        diam_spin.setValue(nom_d)
-        pitch_spin.setValue(p)
-        diam_spin.blockSignals(False)
-        pitch_spin.blockSignals(False)
-
-    spec_combo.currentIndexChanged.connect(on_spec_changed)
-
     layout.addSpacing(8)
 
     btn_layout = QtGui.QHBoxLayout()
@@ -384,8 +461,16 @@ def main():
     if dlg.exec_() != QtGui.QDialog.Accepted:
         return
 
-    nom_diameter = diam_spin.value()
-    pitch = pitch_spin.value()
+    # 获取参数 — 标准模式从 combo 取，自定义模式从 spin 取
+    type_idx = type_combo.currentIndex()
+    if type_idx == 0:
+        nom_diameter = diam_spin.value()
+        pitch = pitch_spin.value()
+    elif type_idx == 1:
+        _, nom_diameter, pitch = coarse_parsed[size_combo.currentIndex()]
+    else:
+        _, nom_diameter, pitch = fine_parsed[size_combo.currentIndex()]
+
     thread_length = len_spin.value()
     is_left_handed = (handed_combo.currentIndex() == 1)
 
