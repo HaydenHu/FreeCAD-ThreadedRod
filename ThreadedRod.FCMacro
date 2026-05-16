@@ -535,13 +535,16 @@ def main():
         start_pt = face_info['axis_start']
         z_axis = Vector(0, 0, 1)
 
-        # 如果没有参考圆面，从圆柱起点开始（之前行为）；有参考面则从参考位置开始
+        # 如果没有参考圆面，从圆柱起点开始；有参考面则从参考面开始
         if has_ref_face:
-            # 以 axis_start 为原点，投影 ref_face_center 到轴上
-            ref_proj = axis.dot(ref_face_center - start_pt)
-            start_pt = start_pt + axis * ref_proj
+            # 直接使用参考面中心投影到轴上的点作为起点
+            start_pt_on_axis = axis.dot(ref_face_center - start_pt)
+            start_pt = start_pt + axis * start_pt_on_axis
 
         start_offset = offset_spin.value()
+        # 无参考面时沿用 pitch*0.5 偏移
+        if not has_ref_face:
+            start_pt = start_pt - axis * (pitch * 0.5)
 
         placement = App.Placement()
         placement.Base = start_pt + axis * start_offset
@@ -559,18 +562,27 @@ def main():
         placement.Rotation = twist.multiply(placement.Rotation)
 
         cutter_body.Placement = placement
+        App.Console.PrintMessage(
+            f"[DEBUG] cutter_body.Placement = {cutter_body.Placement}\n")
         doc.recompute()
+        App.Console.PrintMessage(
+            f"[DEBUG] after recompute cutter_body.Placement = {cutter_body.Placement}\n")
+        App.Console.PrintMessage(
+            f"[DEBUG] cutter_body.Shape.BoundBox = {cutter_body.Shape.BoundBox}\n")
 
-        # ── 步骤 3: Part::Cut — Body 减去 CutterHole = 外螺纹 ──
-        # 使用 BOPFeatures 的模式但跳过 move_input_objects（避免 Body 拒绝 Part::Cut）
+        # ── 步骤 3: Part::Cut — 用户Body 减去 临时 cutter Body 的 Shape ──
+        # 不能直接引用 Body 内的 Hole (会 out of scope)，取整个 cutter_body 的 Shape
         from BOPTools import BOPFeatures
         bp = BOPFeatures.BOPFeatures(doc)
         cut_obj = doc.addObject("Part::Cut", "_ThreadCut")
         cut_obj.Base = doc.getObject(body.Name)
-        cut_obj.Tool = doc.getObject(cutter_hole_name)
+        # 用 cutter_body.Shape 作为切刀（它包含了 Hole 的结果）
+        cutter_tool = doc.addObject("Part::Feature", "_ThreadCutTool")
+        cutter_tool.Shape = cutter_body.Shape
+        cutter_tool.Visibility = False
+        cut_obj.Tool = cutter_tool
         bp.copy_visual_attributes(cut_obj, cut_obj.Base)
         cut_obj.Base.Visibility = False
-        cut_obj.Tool.Visibility = False
         doc.recompute()
 
         result_shape = cut_obj.Shape
@@ -584,8 +596,10 @@ def main():
         if body:
             body.Visibility = False
 
-        # 隐藏临时 cutter body（但保留它，Cut 依赖它）
+        # 隐藏/删除临时对象（保留 cutter_tool，Cut 依赖它）
         cutter_body.Visibility = False
+        # 临时 body 的 Shape 已被提取为 cutter_tool，可以移除临时 body
+        doc.removeObject(cutter_body.Name)
 
         doc.recompute()
 
