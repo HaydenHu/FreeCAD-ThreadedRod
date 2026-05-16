@@ -580,11 +580,10 @@ def main():
 
         doc.recompute()
 
-        # ── 步骤 5: 删除整个临时 Body (含所有子对象) ──
+        # ── 步骤 5: 隐藏临时 Body ──
+        cutter_body.Visibility = False
         for o in cutter_body.Group:
-            doc.removeObject(o.Name)
-        doc.removeObject(cutter_body.Name)
-        doc.recompute()
+            o.Visibility = False
 
         doc.commitTransaction()
 
