@@ -131,32 +131,22 @@ def create_thread_cutter(doc, nom_diameter, pitch, cutter_length, cutter_radius,
     body.addObject(cyl)
     doc.recompute()
 
-    # 找到 sketch 附着面
+    # 找到圆柱顶面用于 sketch 附着
     import Sketcher
-    if flipped:
-        # 圆柱底面 (z=0)
-        face_z = 0.0
-        face_name = "Face1"
-    else:
-        # 圆柱顶面 (z=cutter_length)
-        face_z = cutter_length
-        face_name = "Face2"
-        # 根据实际 shape 确认顶面名称
-        for i, f in enumerate(cyl.Shape.Faces):
-            try:
-                dist = f.distToShape(Part.Vertex(Vector(0, 0, cutter_length)))
-                if abs(dist[0]) < 0.01:
-                    face_name = "Face{}".format(i + 1)
-                    break
-            except Exception:
-                continue
+    face_name = "Face2"
+    for i, f in enumerate(cyl.Shape.Faces):
+        try:
+            dist = f.distToShape(Part.Vertex(Vector(0, 0, cutter_length)))
+            if abs(dist[0]) < 0.01:
+                face_name = "Face{}".format(i + 1)
+                break
+        except Exception:
+            continue
 
     sketch = doc.addObject("Sketcher::SketchObject", "_CutterSketch")
     body.addObject(sketch)
     sketch.AttachmentSupport = (cyl, face_name)
     sketch.MapMode = "FlatFace"
-    if flipped:
-        sketch.MapReversed = True
     doc.recompute()
 
     geo_list = []
@@ -572,6 +562,14 @@ def main():
         # 绕轴旋转黄金角度避免 0°/90° 对齐导致布尔卡死
         twist = App.Rotation(axis, 37.5)
         placement.Rotation = twist.multiply(placement.Rotation)
+
+        # 翻转：绕垂直于轴的向量旋转 180°，把套筒颠倒
+        if flipped:
+            perp = z_axis.cross(axis)
+            if perp.Length < 1e-7:
+                perp = Vector(1, 0, 0)
+            perp.normalize()
+            placement.Rotation = App.Rotation(perp, 180).multiply(placement.Rotation)
 
         cutter_body.Placement = placement
         doc.recompute()
