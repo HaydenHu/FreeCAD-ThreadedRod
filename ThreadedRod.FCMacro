@@ -160,6 +160,25 @@ def create_thread_cutter(doc, nom_diameter, pitch, cutter_length, cutter_radius)
     sketch.addConstraint(Sketcher.Constraint("Coincident", 0, 3, -1, 1))
     doc.recompute()
 
+    # 创建 Hole（先用粗牙初始化，后续通过 find_thread_size 调整）
+    hole = doc.addObject("PartDesign::Hole", "_CutterHole")
+    body.addObject(hole)
+    hole.Profile = sketch
+    hole.Diameter = nom_diameter
+    hole.Depth = cutter_length
+    hole.DepthType = 0
+    hole.DrillPoint = 0
+    hole.Threaded = 1
+    hole.ModelThread = 1
+    hole.ThreadType = 1      # 粗牙 (后续可能切换为细牙)
+    hole.ThreadDepthType = 0
+    hole.ThreadDirection = 0
+    hole.ThreadClass = 0
+    hole.HoleCutType = 0
+    hole.Tapered = 0
+    hole.Reversed = 0
+    hole.Refine = True
+
     # ── ThreadType 枚举: 1=ISOMetricProfile(粗牙), 2=ISOMetricFineProfile(细牙) ──
     THREAD_TYPE_COARSE = 1
     THREAD_TYPE_FINE = 2
