@@ -114,11 +114,9 @@ def suggest_thread(info):
     return None, best_diff
 
 
-def create_thread_cutter(doc, nom_diameter, pitch, cutter_length, cutter_radius, flipped=False):
+def create_thread_cutter(doc, nom_diameter, pitch, cutter_length, cutter_radius):
     """
     利用 PartDesign Hole 创建一个螺纹切刀体。
-
-    flipped=True 时 Hole 从圆柱底面反向打孔。
     """
     # 临时 Body
     body = doc.addObject("PartDesign::Body", "_ThreadCutterBody")
@@ -131,20 +129,17 @@ def create_thread_cutter(doc, nom_diameter, pitch, cutter_length, cutter_radius,
     body.addObject(cyl)
     doc.recompute()
 
-    # 找到圆柱顶面/底面用于 sketch 附着
+    # 找到圆柱顶面用于 sketch 附着
     import Sketcher
-    if flipped:
-        face_name = "Face1"
-    else:
-        face_name = "Face2"
-        for i, f in enumerate(cyl.Shape.Faces):
-            try:
-                dist = f.distToShape(Part.Vertex(Vector(0, 0, cutter_length)))
-                if abs(dist[0]) < 0.01:
-                    face_name = "Face{}".format(i + 1)
-                    break
-            except Exception:
-                continue
+    face_name = "Face2"
+    for i, f in enumerate(cyl.Shape.Faces):
+        try:
+            dist = f.distToShape(Part.Vertex(Vector(0, 0, cutter_length)))
+            if abs(dist[0]) < 0.01:
+                face_name = "Face{}".format(i + 1)
+                break
+        except Exception:
+            continue
 
     sketch = doc.addObject("Sketcher::SketchObject", "_CutterSketch")
     body.addObject(sketch)
@@ -170,11 +165,11 @@ def create_thread_cutter(doc, nom_diameter, pitch, cutter_length, cutter_radius,
     hole.ModelThread = 1
     hole.ThreadType = 1
     hole.ThreadDepthType = 0
-    hole.ThreadDirection = 1 if flipped else 0  # 翻转时反向螺纹
+    hole.ThreadDirection = 0
     hole.ThreadClass = 0
     hole.HoleCutType = 0
     hole.Tapered = 0
-    hole.Reversed = flipped  # 从底面打孔时反向
+    hole.Reversed = 0
     hole.Refine = True
 
     # ── ThreadType 枚举: 1=ISOMetricProfile(粗牙), 2=ISOMetricFineProfile(细牙) ──
@@ -485,16 +480,6 @@ def main():
     handed_layout.addStretch()
     layout.addLayout(handed_layout)
 
-    # 套筒翻转 — 控制 Hole 在套筒哪一头
-    flip_layout = QtGui.QHBoxLayout()
-    flip_layout.addWidget(QtGui.QLabel("套筒翻转:"))
-    flip_combo = QtGui.QComboBox()
-    flip_combo.addItem("正向 (Hole 从顶面)")
-    flip_combo.addItem("翻转 (Hole 从底面)")
-    flip_layout.addWidget(flip_combo)
-    flip_layout.addStretch()
-    layout.addLayout(flip_layout)
-
     layout.addSpacing(8)
 
     btn_layout = QtGui.QHBoxLayout()
@@ -531,9 +516,8 @@ def main():
     try:
         # ── 步骤 1: 创建螺纹切刀体 (Body + Hole with ModelThread) ──
         cutter_radius = nom_diameter / 2.0 + max(pitch * 2, 5.0)
-        flipped = (flip_combo.currentIndex() == 1)
         cutter_body_name, cutter_hole_name, cutter_body = create_thread_cutter(
-            doc, nom_diameter, pitch, thread_length, cutter_radius, flipped)
+            doc, nom_diameter, pitch, thread_length, cutter_radius)
 
         # ── 步骤 2: body 移动到用户圆柱位置/角度 ──
         axis = face_info['axis']
