@@ -570,37 +570,28 @@ def main():
         App.Console.PrintMessage(
             f"[DEBUG] cutter_body.Shape.BoundBox = {cutter_body.Shape.BoundBox}\n")
 
-        # ── 步骤 3: Part::Cut — 用户Body 减去 临时 cutter Body 的 Shape ──
-        # 不能直接引用 Body 内的 Hole (会 out of scope)，取整个 cutter_body 的 Shape
-        from BOPTools import BOPFeatures
-        bp = BOPFeatures.BOPFeatures(doc)
-        cut_obj = doc.addObject("Part::Cut", "_ThreadCut")
-        cut_obj.Base = doc.getObject(body.Name)
-        # 用 cutter_body.Shape 作为切刀（它包含了 Hole 的结果）
-        cutter_tool = doc.addObject("Part::Feature", "_ThreadCutTool")
-        cutter_tool.Shape = cutter_body.Shape
-        cutter_tool.Visibility = False
-        cut_obj.Tool = cutter_tool
-        bp.copy_visual_attributes(cut_obj, cut_obj.Base)
-        cut_obj.Base.Visibility = False
-        doc.recompute()
+        # ── 步骤 3: 低阶布尔 — 用户圆柱 .cut(cutter_body.Shape) = 外螺纹 ──
+        result_shape = source_obj.Shape.cut(cutter_body.Shape)
 
-        result_shape = cut_obj.Shape
         if result_shape is None or result_shape.isNull():
             raise RuntimeError("布尔切割失败。请检查螺纹直径是否合理。")
 
-        # ── 步骤 4: 重命名 Cut 对象并隐藏原始 Body ──
-        cut_obj.Label = f"ThreadedRod_M{nom_diameter:.0f}x{pitch:.2f}"
-        if hasattr(source_obj, 'ViewObject') and hasattr(cut_obj, 'ViewObject'):
-            cut_obj.ViewObject.ShapeColor = source_obj.ViewObject.ShapeColor
+        # ── 步骤 4: 输出结果 ──
         if body:
+            result_obj = doc.addObject('Part::Feature', 'ThreadedRod')
+            result_obj.Shape = result_shape
+            result_obj.Label = f"ThreadedRod_M{nom_diameter:.0f}x{pitch:.2f}"
+            if hasattr(source_obj, 'ViewObject') and hasattr(result_obj, 'ViewObject'):
+                result_obj.ViewObject.ShapeColor = source_obj.ViewObject.ShapeColor
+            source_obj.Visibility = False
             body.Visibility = False
+        else:
+            source_obj.Shape = result_shape
 
-        # 隐藏/删除临时对象（保留 cutter_tool，Cut 依赖它）
-        cutter_body.Visibility = False
-        # 临时 body 的 Shape 已被提取为 cutter_tool，可以移除临时 body
+        doc.recompute()
+
+        # ── 步骤 5: 删除临时对象 ──
         doc.removeObject(cutter_body.Name)
-
         doc.recompute()
 
         doc.commitTransaction()
