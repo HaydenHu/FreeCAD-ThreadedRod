@@ -272,8 +272,13 @@ def main():
     has_ref_face = False
     if ref_face_center is not None and ref_face_normal is not None:
         axis = face_info['axis']
-        if abs(abs(ref_face_normal.dot(axis)) - 1.0) < 0.01:
+        dot = abs(ref_face_normal.dot(axis))
+        App.Console.PrintMessage(
+            f"[ThreadedRod] ref_face_center={ref_face_center}, "
+            f"ref_normal={ref_face_normal}, axis={axis}, dot={dot}\n")
+        if abs(dot - 1.0) < 0.01:
             has_ref_face = True
+    App.Console.PrintMessage(f"[ThreadedRod] has_ref_face={has_ref_face}\n")
 
     body = find_body(source_obj)
 
@@ -530,7 +535,7 @@ def main():
         start_pt = face_info['axis_start']
         z_axis = Vector(0, 0, 1)
 
-        # 如果有参考圆面，用参考面中心在轴上的投影作为起点
+        # 如果没有参考圆面，从圆柱起点开始（之前行为）；有参考面则从参考位置开始
         if has_ref_face:
             # 以 axis_start 为原点，投影 ref_face_center 到轴上
             ref_proj = axis.dot(ref_face_center - start_pt)
@@ -539,7 +544,7 @@ def main():
         start_offset = offset_spin.value()
 
         placement = App.Placement()
-        placement.Base = start_pt + axis * start_offset - axis * (pitch * 0.5)
+        placement.Base = start_pt + axis * start_offset
 
         # 轴对齐旋转
         if abs(axis.dot(z_axis) - 1.0) > 1e-7:
