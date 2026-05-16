@@ -530,12 +530,11 @@ def main():
         start_pt = face_info['axis_start']
         z_axis = Vector(0, 0, 1)
 
-        # 如果有参考圆面，用参考面位置 + 偏移重算轴向上的起点
+        # 如果有参考圆面，用参考面中心在轴上的投影作为起点
         if has_ref_face:
-            # 参考面中心在轴向上的投影
-            ref_on_axis = axis.dot(ref_face_center)
-            # 螺纹从参考面偏移
-            start_pt = face_info['axis_start'] * 0 + axis * ref_on_axis
+            # 以 axis_start 为原点，投影 ref_face_center 到轴上
+            ref_proj = axis.dot(ref_face_center - start_pt)
+            start_pt = start_pt + axis * ref_proj
 
         start_offset = offset_spin.value()
 
