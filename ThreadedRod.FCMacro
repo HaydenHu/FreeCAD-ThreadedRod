@@ -251,13 +251,13 @@ def main():
             if sn.startswith('Face'):
                 try:
                     f = s.Object.Shape.getElement(sn)
-                    # 先检查是否是圆柱面
+                    # 检查是否是圆柱面
                     cyl_info = get_cylindrical_face_info(f)
                     if cyl_info:
                         face_info = cyl_info
                         source_obj = s.Object
-                    elif hasattr(f.Surface, 'Axis'):
-                        # 平面（圆面/环面）→ 可以作为起始参考
+                    elif ref_face_center is None and hasattr(f.Surface, 'Axis'):
+                        # 平面（圆面/环面）→ 可以作为起始参考（取第一个）
                         ref_face_center = f.CenterOfMass
                         ref_face_normal = f.Surface.Axis.normalize()
                 except Exception:
