@@ -179,26 +179,32 @@ def create_thread_cutter(doc, nom_diameter, pitch, cutter_length, cutter_radius)
     hole.Reversed = 0
     hole.Refine = True
 
-    # 匹配 ThreadSize
+    # 匹配 ThreadSize — 同时匹配外径和用户输入的螺距
     thread_sizes = hole.getEnumerationsOfProperty("ThreadSize")
-    target = ""
+    best_match = None
+    best_score = float('inf')
     for ts in thread_sizes:
         ts_lower = ts.lower()
         if ts_lower.startswith("m") and "x" in ts_lower:
             try:
-                d_part = ts_lower[1:].split("x")[0].strip()
-                d = float(d_part)
-                if abs(d - nom_diameter) < 0.01:
-                    target = ts
-                    break
-            except ValueError:
+                parts = ts_lower[1:].split("x")
+                d = float(parts[0].strip())
+                p = float(parts[1].strip())
+                # 外径必须匹配，螺距越接近越好
+                if abs(d - nom_diameter) < 0.02:
+                    score = abs(p - pitch)
+                    if score < best_score:
+                        best_score = score
+                        best_match = ts
+            except (ValueError, IndexError):
                 continue
-    if target:
-        hole.ThreadSize = thread_sizes.index(target)
+    if best_match:
+        hole.ThreadSize = thread_sizes.index(best_match)
     else:
+        # 找不到精确匹配外径 → 任意规格，如果也没匹配到则报错
         sizes_str = ", ".join(thread_sizes[:10]) + ("..." if len(thread_sizes) > 10 else "")
         raise RuntimeError(
-            f"Cannot find matching thread size for M{nom_diameter:.0f}. "
+            f"Cannot find matching thread size for M{nom_diameter:.0f}x{pitch:.2f}. "
             f"Available: {sizes_str}")
 
     doc.recompute()
