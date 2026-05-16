@@ -114,17 +114,16 @@ def suggest_thread(info):
     return None, best_diff
 
 
-def create_thread_cutter(doc, nom_diameter, pitch, cutter_length, cutter_radius):
+def create_thread_cutter(doc, nom_diameter, pitch, cutter_length, cutter_radius, flipped=False):
     """
     利用 PartDesign Hole 创建一个螺纹切刀体。
 
-    在临时 Body 中创建大圆柱体 + 带 ModelThread 的 Hole，
-    Hole.Shape 就是一个螺纹柱体，可直接用于布尔切割。
+    flipped=True 时 Hole 从圆柱底面反向打孔。
     """
-    # 临时 Body — 套一个大圆柱让 Hole 有足够的材料可切
+    # 临时 Body
     body = doc.addObject("PartDesign::Body", "_ThreadCutterBody")
 
-    # 大圆柱 — 半径比 Hole 的草图圆大
+    # 大圆柱
     cyl = doc.addObject("PartDesign::AdditiveCylinder", "_CutterBase")
     cyl.Radius = cutter_radius
     cyl.Height = cutter_length
@@ -132,25 +131,32 @@ def create_thread_cutter(doc, nom_diameter, pitch, cutter_length, cutter_radius)
     body.addObject(cyl)
     doc.recompute()
 
-    # 找到圆柱顶面
-    top_face = None
-    for i, f in enumerate(cyl.Shape.Faces):
-        try:
-            dist = f.distToShape(Part.Vertex(Vector(0, 0, cutter_length)))
-            if abs(dist[0]) < 0.01:
-                top_face = "Face{}".format(i + 1)
-                break
-        except Exception:
-            continue
-    if top_face is None:
-        top_face = "Face2"
-
-    # Sketch — 圆心在原点的圆，直径=公称直径
+    # 找到 sketch 附着面
     import Sketcher
+    if flipped:
+        # 圆柱底面 (z=0)
+        face_z = 0.0
+        face_name = "Face1"
+    else:
+        # 圆柱顶面 (z=cutter_length)
+        face_z = cutter_length
+        face_name = "Face2"
+        # 根据实际 shape 确认顶面名称
+        for i, f in enumerate(cyl.Shape.Faces):
+            try:
+                dist = f.distToShape(Part.Vertex(Vector(0, 0, cutter_length)))
+                if abs(dist[0]) < 0.01:
+                    face_name = "Face{}".format(i + 1)
+                    break
+            except Exception:
+                continue
+
     sketch = doc.addObject("Sketcher::SketchObject", "_CutterSketch")
     body.addObject(sketch)
-    sketch.AttachmentSupport = (cyl, top_face)
+    sketch.AttachmentSupport = (cyl, face_name)
     sketch.MapMode = "FlatFace"
+    if flipped:
+        sketch.MapReversed = True
     doc.recompute()
 
     geo_list = []
@@ -160,7 +166,6 @@ def create_thread_cutter(doc, nom_diameter, pitch, cutter_length, cutter_radius)
     sketch.addConstraint(Sketcher.Constraint("Coincident", 0, 3, -1, 1))
     doc.recompute()
 
-    # 创建 Hole（先用粗牙初始化，后续通过 find_thread_size 调整）
     hole = doc.addObject("PartDesign::Hole", "_CutterHole")
     body.addObject(hole)
     hole.Profile = sketch
@@ -170,13 +175,13 @@ def create_thread_cutter(doc, nom_diameter, pitch, cutter_length, cutter_radius)
     hole.DrillPoint = 0
     hole.Threaded = 1
     hole.ModelThread = 1
-    hole.ThreadType = 1      # 粗牙 (后续可能切换为细牙)
+    hole.ThreadType = 1
     hole.ThreadDepthType = 0
     hole.ThreadDirection = 0
     hole.ThreadClass = 0
     hole.HoleCutType = 0
     hole.Tapered = 0
-    hole.Reversed = 0
+    hole.Reversed = flipped
     hole.Refine = True
 
     # ── ThreadType 枚举: 1=ISOMetricProfile(粗牙), 2=ISOMetricFineProfile(细牙) ──
@@ -487,6 +492,16 @@ def main():
     handed_layout.addStretch()
     layout.addLayout(handed_layout)
 
+    # 套筒翻转 — 控制 Hole 在套筒哪一头
+    flip_layout = QtGui.QHBoxLayout()
+    flip_layout.addWidget(QtGui.QLabel("套筒翻转:"))
+    flip_combo = QtGui.QComboBox()
+    flip_combo.addItem("正向 (Hole 从顶面)")
+    flip_combo.addItem("翻转 (Hole 从底面)")
+    flip_layout.addWidget(flip_combo)
+    flip_layout.addStretch()
+    layout.addLayout(flip_layout)
+
     layout.addSpacing(8)
 
     btn_layout = QtGui.QHBoxLayout()
@@ -523,8 +538,9 @@ def main():
     try:
         # ── 步骤 1: 创建螺纹切刀体 (Body + Hole with ModelThread) ──
         cutter_radius = nom_diameter / 2.0 + max(pitch * 2, 5.0)
+        flipped = (flip_combo.currentIndex() == 1)
         cutter_body_name, cutter_hole_name, cutter_body = create_thread_cutter(
-            doc, nom_diameter, pitch, thread_length, cutter_radius)
+            doc, nom_diameter, pitch, thread_length, cutter_radius, flipped)
 
         # ── 步骤 2: body 移动到用户圆柱位置/角度 ──
         axis = face_info['axis']
