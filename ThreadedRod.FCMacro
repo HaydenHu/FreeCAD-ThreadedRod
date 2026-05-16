@@ -170,11 +170,11 @@ def create_thread_cutter(doc, nom_diameter, pitch, cutter_length, cutter_radius,
     hole.ModelThread = 1
     hole.ThreadType = 1
     hole.ThreadDepthType = 0
-    hole.ThreadDirection = 0
+    hole.ThreadDirection = 1 if flipped else 0  # 翻转时反向螺纹
     hole.ThreadClass = 0
     hole.HoleCutType = 0
     hole.Tapered = 0
-    hole.Reversed = flipped
+    hole.Reversed = flipped  # 从底面打孔时反向
     hole.Refine = True
 
     # ── ThreadType 枚举: 1=ISOMetricProfile(粗牙), 2=ISOMetricFineProfile(细牙) ──
