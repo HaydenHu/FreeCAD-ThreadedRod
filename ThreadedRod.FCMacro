@@ -131,17 +131,20 @@ def create_thread_cutter(doc, nom_diameter, pitch, cutter_length, cutter_radius,
     body.addObject(cyl)
     doc.recompute()
 
-    # 找到圆柱顶面用于 sketch 附着
+    # 找到圆柱顶面/底面用于 sketch 附着
     import Sketcher
-    face_name = "Face2"
-    for i, f in enumerate(cyl.Shape.Faces):
-        try:
-            dist = f.distToShape(Part.Vertex(Vector(0, 0, cutter_length)))
-            if abs(dist[0]) < 0.01:
-                face_name = "Face{}".format(i + 1)
-                break
-        except Exception:
-            continue
+    if flipped:
+        face_name = "Face1"
+    else:
+        face_name = "Face2"
+        for i, f in enumerate(cyl.Shape.Faces):
+            try:
+                dist = f.distToShape(Part.Vertex(Vector(0, 0, cutter_length)))
+                if abs(dist[0]) < 0.01:
+                    face_name = "Face{}".format(i + 1)
+                    break
+            except Exception:
+                continue
 
     sketch = doc.addObject("Sketcher::SketchObject", "_CutterSketch")
     body.addObject(sketch)
@@ -563,13 +566,6 @@ def main():
         twist = App.Rotation(axis, 37.5)
         placement.Rotation = twist.multiply(placement.Rotation)
 
-        # 翻转：绕垂直于轴的向量旋转 180°，把套筒颠倒
-        if flipped:
-            perp = z_axis.cross(axis)
-            if perp.Length < 1e-7:
-                perp = Vector(1, 0, 0)
-            perp.normalize()
-            placement.Rotation = App.Rotation(perp, 180).multiply(placement.Rotation)
 
         cutter_body.Placement = placement
         doc.recompute()
