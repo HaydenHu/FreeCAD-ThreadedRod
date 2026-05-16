@@ -163,7 +163,7 @@ def create_thread_cutter(doc, nom_diameter, pitch, cutter_length, cutter_radius,
     body.addObject(hole)
     hole.Profile = sketch
     hole.Diameter = nom_diameter
-    hole.Depth = cutter_length
+    hole.Depth = cutter_length + pitch * 1.5
     hole.DepthType = 0
     hole.DrillPoint = 0
     hole.Threaded = 1
