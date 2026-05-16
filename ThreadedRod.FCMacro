@@ -405,9 +405,11 @@ def main():
     if suggested:
         suggested_d = METRIC_THREADS[suggested][0]
 
-    # 默认选粗牙
+    # 默认选粗牙 — 手动设初始状态（信号尚未连接，setCurrentIndex 不会触发）
     type_combo.setCurrentIndex(1)
     set_size_combo(coarse_parsed, suggested_d)
+    custom_widget.setVisible(False)
+    size_combo.setEnabled(True)
 
     def on_type_changed(idx):
         if idx == 0:
