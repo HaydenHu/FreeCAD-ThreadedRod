@@ -273,12 +273,8 @@ def main():
     if ref_face_center is not None and ref_face_normal is not None:
         axis = face_info['axis']
         dot = abs(ref_face_normal.dot(axis))
-        App.Console.PrintMessage(
-            f"[ThreadedRod] ref_face_center={ref_face_center}, "
-            f"ref_normal={ref_face_normal}, axis={axis}, dot={dot}\n")
         if abs(dot - 1.0) < 0.01:
             has_ref_face = True
-    App.Console.PrintMessage(f"[ThreadedRod] has_ref_face={has_ref_face}\n")
 
     body = find_body(source_obj)
 
@@ -562,13 +558,7 @@ def main():
         placement.Rotation = twist.multiply(placement.Rotation)
 
         cutter_body.Placement = placement
-        App.Console.PrintMessage(
-            f"[DEBUG] cutter_body.Placement = {cutter_body.Placement}\n")
         doc.recompute()
-        App.Console.PrintMessage(
-            f"[DEBUG] after recompute cutter_body.Placement = {cutter_body.Placement}\n")
-        App.Console.PrintMessage(
-            f"[DEBUG] cutter_body.Shape.BoundBox = {cutter_body.Shape.BoundBox}\n")
 
         # ── 步骤 3: 低阶布尔 — 用户圆柱 .cut(cutter_body.Shape) = 外螺纹 ──
         result_shape = source_obj.Shape.cut(cutter_body.Shape)
@@ -576,21 +566,23 @@ def main():
         if result_shape is None or result_shape.isNull():
             raise RuntimeError("布尔切割失败。请检查螺纹直径是否合理。")
 
-        # ── 步骤 4: 输出结果 ──
+        # ── 步骤 4: 输出结果 (放回用户的 PartDesign Body) ──
         if body:
-            result_obj = doc.addObject('Part::Feature', 'ThreadedRod')
+            # 直接在 Body 中创建一个特征替换原来的 shape
+            result_obj = doc.addObject('PartDesign::Feature', 'ThreadedRod')
             result_obj.Shape = result_shape
             result_obj.Label = f"ThreadedRod_M{nom_diameter:.0f}x{pitch:.2f}"
-            if hasattr(source_obj, 'ViewObject') and hasattr(result_obj, 'ViewObject'):
-                result_obj.ViewObject.ShapeColor = source_obj.ViewObject.ShapeColor
+            body.addObject(result_obj)
+            # 隐藏原来的 source_obj feature
             source_obj.Visibility = False
-            body.Visibility = False
         else:
             source_obj.Shape = result_shape
 
         doc.recompute()
 
-        # ── 步骤 5: 删除临时对象 ──
+        # ── 步骤 5: 删除整个临时 Body (含所有子对象) ──
+        for o in cutter_body.Group:
+            doc.removeObject(o.Name)
         doc.removeObject(cutter_body.Name)
         doc.recompute()
 
