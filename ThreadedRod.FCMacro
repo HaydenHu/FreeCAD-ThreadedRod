@@ -160,52 +160,50 @@ def create_thread_cutter(doc, nom_diameter, pitch, cutter_length, cutter_radius)
     sketch.addConstraint(Sketcher.Constraint("Coincident", 0, 3, -1, 1))
     doc.recompute()
 
-    # Hole — ModelThread=1 生成真实螺纹几何
-    hole = doc.addObject("PartDesign::Hole", "_CutterHole")
-    body.addObject(hole)
-    hole.Profile = sketch
-    hole.Diameter = nom_diameter
-    hole.Depth = cutter_length
-    hole.DepthType = 0       # 固定深度
-    hole.DrillPoint = 0      # 平底
-    hole.Threaded = 1
-    hole.ModelThread = 1     # 3D 螺纹几何
-    hole.ThreadType = 1      # ISO Metric Profile
-    hole.ThreadDepthType = 0
-    hole.ThreadDirection = 0
-    hole.ThreadClass = 0
-    hole.HoleCutType = 0
-    hole.Tapered = 0
-    hole.Reversed = 0
-    hole.Refine = True
+    # ── ThreadType 枚举: 1=ISOMetricProfile(粗牙), 2=ISOMetricFineProfile(细牙) ──
+    THREAD_TYPE_COARSE = 1
+    THREAD_TYPE_FINE = 2
 
-    # 匹配 ThreadSize — 同时匹配外径和用户输入的螺距
-    thread_sizes = hole.getEnumerationsOfProperty("ThreadSize")
-    best_match = None
-    best_score = float('inf')
-    for ts in thread_sizes:
-        ts_lower = ts.lower()
-        if ts_lower.startswith("m") and "x" in ts_lower:
-            try:
-                parts = ts_lower[1:].split("x")
-                d = float(parts[0].strip())
-                p = float(parts[1].strip())
-                # 外径必须匹配，螺距越接近越好
-                if abs(d - nom_diameter) < 0.02:
-                    score = abs(p - pitch)
-                    if score < best_score:
-                        best_score = score
-                        best_match = ts
-            except (ValueError, IndexError):
-                continue
-    if best_match:
-        hole.ThreadSize = thread_sizes.index(best_match)
+    def find_thread_size(thread_type, nom_d, pt):
+        """在指定的 ThreadType 中搜索匹配 (外径, 螺距) 的 ThreadSize，返回最佳匹配字符串或 None"""
+        # 临时切换 ThreadType 以获取对应枚举
+        hole.ThreadType = thread_type
+        sizes = hole.getEnumerationsOfProperty("ThreadSize")
+        best = None
+        best_score = float('inf')
+        for s in sizes:
+            sl = s.lower()
+            if sl.startswith("m") and "x" in sl:
+                try:
+                    parts = sl[1:].split("x")
+                    d = float(parts[0].strip())
+                    p = float(parts[1].strip())
+                    if abs(d - nom_d) < 0.02:
+                        score = abs(p - pt)
+                        if score < best_score:
+                            best_score = score
+                            best = s
+                except (ValueError, IndexError):
+                    continue
+        return best, best_score
+
+    # 先粗牙再细牙搜索，选螺距最匹配的
+    match_coarse, score_coarse = find_thread_size(THREAD_TYPE_COARSE, nom_diameter, pitch)
+    match_fine, score_fine = find_thread_size(THREAD_TYPE_FINE, nom_diameter, pitch)
+
+    if match_fine and (not match_coarse or score_fine <= score_coarse):
+        hole.ThreadType = THREAD_TYPE_FINE
+        sizes = hole.getEnumerationsOfProperty("ThreadSize")
+        hole.ThreadSize = sizes.index(match_fine)
+    elif match_coarse:
+        hole.ThreadType = THREAD_TYPE_COARSE
+        sizes = hole.getEnumerationsOfProperty("ThreadSize")
+        hole.ThreadSize = sizes.index(match_coarse)
     else:
-        # 找不到精确匹配外径 → 任意规格，如果也没匹配到则报错
-        sizes_str = ", ".join(thread_sizes[:10]) + ("..." if len(thread_sizes) > 10 else "")
+        sizes_str = ", ".join(hole.getEnumerationsOfProperty("ThreadSize")[:10])
         raise RuntimeError(
             f"Cannot find matching thread size for M{nom_diameter:.0f}x{pitch:.2f}. "
-            f"Available: {sizes_str}")
+            f"Available in coarse: {sizes_str}")
 
     doc.recompute()
 
