@@ -413,15 +413,15 @@ def main():
 
     def on_type_changed(idx):
         if idx == 0:
-            size_combo.setEnabled(False)
+            size_combo.setVisible(False)
             custom_widget.setVisible(True)
             size_combo.clear()
         elif idx == 1:
-            size_combo.setEnabled(True)
+            size_combo.setVisible(True)
             custom_widget.setVisible(False)
             set_size_combo(coarse_parsed, suggested_d)
         elif idx == 2:
-            size_combo.setEnabled(True)
+            size_combo.setVisible(True)
             custom_widget.setVisible(False)
             set_size_combo(fine_parsed, suggested_d)
 
