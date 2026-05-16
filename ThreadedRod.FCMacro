@@ -238,9 +238,11 @@ def main():
         QtGui.QMessageBox.warning(None, "错误", "请先选中一个圆柱面。")
         return
 
-    # 提取选中的圆柱面信息
+    # 提取选中的面 — 圆柱面(螺纹面) + 圆面(起始参考)
     face_info = None
     source_obj = None
+    ref_face_center = None  # 参考圆面的中心点 (世界坐标)
+    ref_face_normal = None  # 参考圆面的法向
 
     for s in sel:
         if not hasattr(s.Object, 'Shape'):
@@ -249,20 +251,29 @@ def main():
             if sn.startswith('Face'):
                 try:
                     f = s.Object.Shape.getElement(sn)
-                    info = get_cylindrical_face_info(f)
-                    if info:
-                        face_info = info
+                    # 先检查是否是圆柱面
+                    cyl_info = get_cylindrical_face_info(f)
+                    if cyl_info:
+                        face_info = cyl_info
                         source_obj = s.Object
-                        break
+                    elif hasattr(f.Surface, 'Axis'):
+                        # 平面（圆面/环面）→ 可以作为起始参考
+                        ref_face_center = f.CenterOfMass
+                        ref_face_normal = f.Surface.Axis.normalize()
                 except Exception:
                     pass
-        if face_info:
-            break
 
     if not face_info:
         QtGui.QMessageBox.warning(None, "错误",
             "未检测到有效的圆柱面。\n请选中螺丝柱的外圆柱面。")
         return
+
+    # 验证参考面法向是否与圆柱轴平行（同向或反向）
+    has_ref_face = False
+    if ref_face_center is not None and ref_face_normal is not None:
+        axis = face_info['axis']
+        if abs(abs(ref_face_normal.dot(axis)) - 1.0) < 0.01:
+            has_ref_face = True
 
     body = find_body(source_obj)
 
@@ -442,6 +453,29 @@ def main():
     len_layout.addWidget(len_spin)
     layout.addLayout(len_layout)
 
+    # 起始偏移 — 仅当选了参考圆面时可用
+    ref_face_note = QtGui.QLabel("(选中了参考圆面，螺纹将从该面偏移指定距离开始)")
+    ref_face_note.setStyleSheet("color: #228833;")
+    if not has_ref_face:
+        ref_face_note.setText("(未检测到参考圆面，螺纹从圆柱起点开始)")
+        ref_face_note.setStyleSheet("color: #888;")
+    layout.addWidget(ref_face_note)
+
+    offset_layout = QtGui.QHBoxLayout()
+    offset_layout.addWidget(QtGui.QLabel("起始偏移 (mm):"))
+    offset_spin = QtGui.QDoubleSpinBox()
+    offset_spin.setRange(-9999.0, 9999.0)
+    offset_spin.setDecimals(2)
+    offset_spin.setSingleStep(1.0)
+    offset_spin.setValue(0.0)
+    offset_spin.setToolTip("正值 = 向参考面外侧偏移\n"
+                          "负值 = 向参考面内侧偏移\n"
+                          "仅当选了参考圆面时有效")
+    if not has_ref_face:
+        offset_spin.setEnabled(False)
+    offset_layout.addWidget(offset_spin)
+    layout.addLayout(offset_layout)
+
     # 螺纹旋向
     handed_layout = QtGui.QHBoxLayout()
     handed_layout.addWidget(QtGui.QLabel("旋向:"))
@@ -491,13 +525,22 @@ def main():
         cutter_body_name, cutter_hole_name, cutter_body = create_thread_cutter(
             doc, nom_diameter, pitch, thread_length, cutter_radius)
 
-        # ── 步骤 2: b ody 移动到用户圆柱位置/角度 ──
+        # ── 步骤 2: body 移动到用户圆柱位置/角度 ──
         axis = face_info['axis']
         start_pt = face_info['axis_start']
         z_axis = Vector(0, 0, 1)
 
+        # 如果有参考圆面，用参考面位置 + 偏移重算轴向上的起点
+        if has_ref_face:
+            # 参考面中心在轴向上的投影
+            ref_on_axis = axis.dot(ref_face_center)
+            # 螺纹从参考面偏移
+            start_pt = face_info['axis_start'] * 0 + axis * ref_on_axis
+
+        start_offset = offset_spin.value()
+
         placement = App.Placement()
-        placement.Base = start_pt - axis * (pitch * 0.5)
+        placement.Base = start_pt + axis * start_offset - axis * (pitch * 0.5)
 
         # 轴对齐旋转
         if abs(axis.dot(z_axis) - 1.0) > 1e-7:
