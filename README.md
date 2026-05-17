@@ -1,6 +1,7 @@
 # ThreadedRod - FreeCAD 螺丝柱外螺纹宏
 
 通过 FreeCAD 自带 PartDesign Hole 的螺纹功能，在圆柱面上生成真实的外螺纹。
+<img width="1920" height="1032" alt="image" src="https://github.com/user-attachments/assets/4227b3d4-3e7a-4096-a72a-72f3f51a4f41" />
 
 ## 背景
 
