@@ -39,6 +39,8 @@ git clone https://github.com/HaydenHu/FreeCAD-ThreadedRod.git .
 
 ## 使用方法
 
+<img width="1280" height="688" alt="QQ20260517-192120" src="https://github.com/user-attachments/assets/bdd4013b-1adf-4d4a-9917-f908591d8dc2" />
+
 1. 在 Part 或 PartDesign 工作台中选中一个圆柱面
 2. 点击工具栏的 **螺丝柱外螺纹** 按钮
 3. 在弹出的对话框中：
